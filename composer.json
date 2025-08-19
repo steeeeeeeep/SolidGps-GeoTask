@@ -1,0 +1,6 @@
+{
+    "require": {
+        "phayes/geophp": "dev-master",
+        "monolog/monolog": "^3.9"
+    }
+}

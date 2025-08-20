@@ -4,73 +4,107 @@ require __DIR__ . '/vendor/autoload.php';
 use Monolog\Logger;
 use Monolog\Handler\StreamHandler;
 
-$log = new Logger('GIS-Rejects');
+function calc_geodata()
+{
+  $log = new Logger('GIS-Rejects');
 
-$log->pushHandler(new StreamHandler(__DIR__ . '/reject.log', Logger::WARNING));
+  $log->pushHandler(new StreamHandler(__DIR__ . '/reject.log', Logger::WARNING));
 
-$fileName = __DIR__ . "/data/points.csv";
-$handleFile = file_get_contents($fileName);
-$pointsList = array_map("str_getcsv", explode("\n", trim($handleFile)));
+  $fileName = __DIR__ . "/data/points.csv";
+  $handleFile = file_get_contents($fileName);
+  $pointsList = array_map("str_getcsv", explode("\n", trim($handleFile)));
 
-$points = [];
+  $points = [];
 
-foreach ($pointsList as $data) {
+  foreach ($pointsList as $data) {
 
-  if (count($data) > 3 && isValidCoordinates($data[1], $data[2]) && isValidTimeFormat($data[3])) {
-    $points[] = [
-      "lat" => $data[1],
-      "lon" => $data[2],
-      "time" => $data[3],
-    ];
-  } else {
-    // $logMessage = "Invalid Coordinates";
-    // $log->warning("Points {" . implode($data) . "} has been rejected.", [
-    //   "Reason" => $logMessage
-    // ]);
-  }
-
-}
-
-array_multisort(array_column($points, 'time'), SORT_ASC, $points);
-
-$trips = [];
-$currTrip = [];
-$tripIndex = 1;
-
-for ($i = 0; $i < count($points); $i++) {
-
-  if ($i === 0) {
-    $currTrip[] = $points[$i];
-    continue;
-  }
-
-  $currPoints = $points[$i];
-  $prevPoints = $points[$i - 1];
-
-  $distanceJump = calc_haversine($prevPoints['lat'], $prevPoints['lon'], $currPoints['lat'], $currPoints['lon']);
-  $timeDiff = (strtotime($currPoints['time']) - strtotime($prevPoints['time'])) / 60;
-  // echo "Time diff: $timeDiff min, Distance: $distanceJump km\n";
-  // $log->warning("Points has been rejected.", [
-  //   "Reason" => "Time diff: $timeDiff min, Distance: $distanceJump km\n"
-  // ]);
-  if ($timeDiff > 25 || $distanceJump > 2) {
-    echo $timeDiff . "\n" . $distanceJump . "'n";
-    if (!empty($currTrip)) {
-      $trips["trip_" . $tripIndex] = tripSummary($currTrip);
-      $tripIndex++;
-      $currTrip = [];
+    if (count($data) > 3 && isValidCoordinates($data[1], $data[2]) && isValidTimeFormat($data[3])) {
+      $points[] = [
+        "lat" => $data[1],
+        "lon" => $data[2],
+        "time" => $data[3],
+      ];
+    } else {
+      $logMessage = "Invalid Coordinates";
+      $log->warning("Points {" . implode($data) . "} has been rejected.", [
+        "Reason" => $logMessage
+      ]);
     }
+
   }
 
-  $currTrip = $currPoints;
+  array_multisort(array_column($points, 'time'), SORT_ASC, $points);
+
+  $trips = [];
+  $currTrip = [];
+  $tripIndex = 1;
+
+  for ($i = 0; $i < count($points); $i++) {
+
+    if ($i === 0) {
+      $currTrip[] = $points[$i];
+      continue;
+    }
+
+    $currPoints = $points[$i];
+    $prevPoints = $points[$i - 1];
+
+    $distanceJump = calc_haversine($prevPoints['lat'], $prevPoints['lon'], $currPoints['lat'], $currPoints['lon']);
+    $timeDiff = (strtotime($currPoints['time']) - strtotime($prevPoints['time'])) / 60;
+
+    if ($timeDiff > 25 || $distanceJump > 2) {
+
+      if (!empty($currTrip)) {
+        $trips["trip_" . $tripIndex] = tripSummary($currTrip);
+        $tripIndex++;
+        $currTrip = [];
+      }
+    }
+
+    $currTrip = $currPoints;
+  }
+
+  if (!empty($currTrip)) {
+    $trips["trip_" . $tripIndex] = tripSummary($currTrip);
+  }
+
+
+  $geojsonFeatures = [];
+
+  foreach ($trips as $tripId => $tripData) {
+    $lat = (float) $tripData['points']['lat'];
+    $lon = (float) $tripData['points']['lon'];
+
+    $feature = [
+      'type' => 'Feature',
+      'properties' => [
+        'trip_id' => $tripId,
+        'color' => getRandomColor(),
+        'total_distance_km' => $tripData['total_distance_km'],
+        'duration_min' => $tripData['duration_min'],
+        'avg_speed_kmh' => $tripData['avg_speed_kmh'],
+        'max_speed_kmh' => $tripData['max_speed_kmh'],
+        'timestamp' => $tripData['points']['time']
+      ],
+      'geometry' => [
+        'type' => 'LineString',
+        'coordinates' => [
+          [$lon, $lat]
+        ]
+      ]
+    ];
+
+    $geojsonFeatures[] = $feature;
+  }
+
+  $featureCollection = [
+    'type' => 'FeatureCollection',
+    'features' => $geojsonFeatures
+  ];
+
+  echo json_encode($featureCollection, JSON_PRETTY_PRINT);
+
 }
-
-if (!empty($currTrip)) {
-  $trips["trip_" . $tripIndex] = tripSummary($currTrip);
-}
-
-print_r($trips);
-
 
 function tripSummary($trip)
 {
@@ -147,3 +181,10 @@ function isValidTimeFormat($timeStamp)
 {
   return (bool) strtotime($timeStamp);
 }
+
+function getRandomColor()
+{
+  return '#' . str_pad(dechex(mt_rand(0, 0xFFFFFF)), 6, '0', STR_PAD_LEFT);
+}
+
+calc_geodata();
